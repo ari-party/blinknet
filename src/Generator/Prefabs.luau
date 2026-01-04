@@ -5,14 +5,21 @@ local Blocks = require("./Blocks")
 local Parser = require("../Parser")
 
 type Block = Blocks.Block
-type Writer = (Value: string, Block: Block, Range: NumberRange?, Components: { string }?) -> ()
-type Reader = (Variable: string, Block: Block, Range: NumberRange?, Components: { string }?) -> ()
+type Writer = (Value: string, Block: Block, Range: Parser.NumberRange?, Components: { string }?) -> ()
+type Reader = (
+	Variable: string,
+	Block: Block,
+	AllowNilInstances: boolean?,
+	Range: Parser.NumberRange?,
+	Components: { string }?
+) -> ()
 type Generate = (
 	Declaration: Parser.Primitive,
 	Variable: string?,
 	Read: Block,
 	Write: Block,
-	WriteValidations: boolean?
+	WriteValidations: boolean?,
+	AllowNilInstances: boolean?
 ) -> ()
 
 type TypePrefab = {
@@ -118,14 +125,15 @@ end
 local function GeneratePrimitivePrefab(Type: string, Prefab: TypePrefab, AssertGenerator: AssertGenerator?): Generate
 	return function(
 		Declaration: Parser.Primitive,
-		Variable: string?,
+		VariableArgument: string?,
 		Read: Block,
 		Write: Block,
-		WriteValidations: boolean?
+		WriteValidations: boolean?,
+		AllowNilInstances: boolean?
 	)
 		local Value = Declaration.Value
 		local Tokens = Declaration.Tokens
-		local Variable = Variable or "Value"
+		local Variable = VariableArgument or "Value"
 
 		local Range = Value.Range
 		local Class = Value.Class
@@ -133,14 +141,16 @@ local function GeneratePrimitivePrefab(Type: string, Prefab: TypePrefab, AssertG
 		local Primitive = Tokens.Primitive.Value
 		local IsVariableSize = (Range and Range.Max ~= Range.Min)
 
-		local function GenerateValidation(Block: Block, Variable: string)
+		local function GenerateValidation(Block: Block, VariableName: string)
 			if Block == Write and WriteValidations ~= true then
 				return
 			end
 
 			if Block == Write and Type ~= "any" then
-				Block:Compare(`typeof({Variable})`, `"{Type}"`, "Not")
-					:Line(`error(\`Expected {Variable} to be of type {Type}, got \{type({Variable})} instead.\`)`)
+				Block:Compare(`typeof({VariableName})`, `"{Type}"`, "Not")
+					:Line(
+						`error(\`Expected {VariableName} to be of type {Type}, got \{type({VariableName})} instead.\`)`
+					)
 					:End()
 			end
 
@@ -149,25 +159,25 @@ local function GeneratePrimitivePrefab(Type: string, Prefab: TypePrefab, AssertG
 			end
 
 			if Range then
-				local Assert = AssertGenerator(Variable, Range.Min, Range.Max)
+				local Assert = AssertGenerator(VariableName, Range.Min, Range.Max)
 				if not IsVariableSize and Assert.Exact then
-					Block:Line(Assert.Exact)
+					Block:Line(Assert.Exact :: string)
 				else
 					Block:Line(Assert.Lower)
 					Block:Line(Assert.Upper)
 				end
 			elseif Primitive == "Instance" and Class then
-				local Assert = AssertGenerator(Variable, Class)
+				local Assert = AssertGenerator(VariableName, Class)
 				if Block == Write then
-					Block:Compare(Variable, "nil", "Not"):Multiline(Assert.Exact, Block.Indent + 1):End()
+					Block:Compare(VariableName, "nil", "Not"):Multiline(Assert.Exact :: string, Block.Indent + 1):End()
 				else
-					Block:Multiline(Assert.Exact, Block.Indent)
+					Block:Multiline(Assert.Exact :: string, Block.Indent)
 				end
 			end
 		end
 
 		GenerateValidation(Write, Variable)
-		Prefab.Read(Variable, Read, Range, Components)
+		Prefab.Read(Variable, Read, AllowNilInstances, Range, Components)
 		Prefab.Write(Variable, Write, Range, Components)
 		GenerateValidation(Read, Variable)
 	end
@@ -175,7 +185,7 @@ end
 
 local function GenerateNumberGenerator(Type: string, Size: number): (TypePrefab, { Type: string, Generate: Generate })
 	local Prefab = {
-		Read = function(Variable: string, Block: Block)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?)
 			Block:Line(`{Block:Declare(Variable)} = buffer.read{Type}({RECIEVE_BUFFER}, {Block:Read(Size)})`)
 		end,
 		Write = function(Value: string, Block: Block)
@@ -204,7 +214,7 @@ Types.f32, Primitives.f32 = GenerateNumberGenerator("f32", FLOAT)
 Types.f64, Primitives.f64 = GenerateNumberGenerator("f64", DOUBLE)
 
 Types.f16 = {
-	Read = function(Variable: string, Block: Block)
+	Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?)
 		Types.u16.Read("Encoded", Block)
 		Block:Declare(Variable, true)
 		Block:Line(`local MantissaExponent = Encoded % 0x8000`)
@@ -271,7 +281,7 @@ Primitives.f16 = {
 --> Boolean
 do
 	Types.boolean = {
-		Read = function(Variable: string, Block: Block)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?)
 			Block:Line(`{Block:Declare(Variable)} = (buffer.readu8({RECIEVE_BUFFER}, {Block:Read(BYTE)}) == 1)`)
 		end,
 		Write = function(Value: string, Block: Block)
@@ -288,7 +298,7 @@ end
 --> String
 do
 	Types.string = {
-		Read = function(Variable: string, Block: Block, Range: NumberRange?)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?, Range: Parser.NumberRange?)
 			--> Fixed size string
 			if Range and Range.Min == Range.Max then
 				Block:Line(
@@ -303,7 +313,7 @@ do
 			LengthType.Read("Length", Block)
 			Block:Line(`{Block:Declare(Variable)} = buffer.readstring({RECIEVE_BUFFER}, Read(Length), Length)`)
 		end,
-		Write = function(Value: string, Block: Block, Range: NumberRange?)
+		Write = function(Value: string, Block: Block, Range: Parser.NumberRange?)
 			if Range and Range.Min == Range.Max then
 				Block:Line(`buffer.writestring({SEND_BUFFER}, {Block:Allocate(Range.Min)}, {Value}, {Range.Min})`)
 				return
@@ -328,7 +338,7 @@ end
 --> Vector
 do
 	Types.vector = {
-		Read = function(Variable: string, Block: Block, _, Components: { string }?)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?, _, Components: { string }?)
 			local Prefab: TypePrefab = Types.f32
 			if Components then
 				Prefab = Types[Components[#Components]] or Prefab
@@ -361,7 +371,7 @@ end
 --> Buffer
 do
 	Types.buffer = {
-		Read = function(Variable: string, Block: Block, Range: NumberRange?)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?, Range: Parser.NumberRange?)
 			if Range and Range.Min == Range.Max then
 				local Length = Range.Max
 				Block:Line(`{Block:Declare(Variable)} = buffer.create({Length})`)
@@ -375,7 +385,7 @@ do
 			Block:Line(`{Block:Declare(Variable)} = buffer.create(Length)`)
 			Block:Line(`buffer.copy({Variable}, 0, {RECIEVE_BUFFER}, Read(Length), Length)`)
 		end,
-		Write = function(Value: string, Block: Block, Range: NumberRange?)
+		Write = function(Value: string, Block: Block, Range: Parser.NumberRange?)
 			if Range and Range.Min == Range.Max then
 				Block:Line(`buffer.copy({SEND_BUFFER}, {Block:Allocate(Range.Max)}, {Value}, 0, {Range.Max})`)
 				return
@@ -399,7 +409,7 @@ end
 --> CFrame
 do
 	Types.CFrame = {
-		Read = function(Variable: string, Block: Block, _, Components: { string }?)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?, _, Components: { string }?)
 			local Prefab: TypePrefab = Types.f32
 			if Components then
 				Prefab = Types[Components[1]]
@@ -434,7 +444,7 @@ end
 --> Color3
 do
 	Types.Color3 = {
-		Read = function(Variable: string, Block: Block)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?)
 			local R = Block:Read(BYTE)
 			local G = Block:Read(BYTE)
 			local B = Block:Read(BYTE)
@@ -459,7 +469,7 @@ end
 --> DateTime
 do
 	Types.DateTime = {
-		Read = function(Variable: string, Block: Block)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?)
 			local UnixTimestamp = Block:Read(BYTE)
 			Block:Line(
 				`{Block:Declare(Variable)} = DateTime.fromUnixTimestamp(buffer.readf64({RECIEVE_BUFFER}, {UnixTimestamp}))`
@@ -480,7 +490,7 @@ end
 --> DateTimeMillis
 do
 	Types.DateTimeMillis = {
-		Read = function(Variable: string, Block: Block)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?)
 			local UnixTimestampMillis = Block:Read(BYTE)
 			Block:Line(
 				`{Block:Declare(Variable)} = DateTime.fromUnixTimestampMillis(buffer.readf64({RECIEVE_BUFFER}, {UnixTimestampMillis}))`
@@ -501,7 +511,7 @@ end
 --> BrickColor
 do
 	Types.BrickColor = {
-		Read = function(Variable: string, Block: Block)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?)
 			local Number = Block:Read(SHORT)
 			Block:Line(`{Block:Declare(Variable)} = BrickColor.new(buffer.readu16({RECIEVE_BUFFER}, {Number}))`)
 		end,
@@ -520,7 +530,7 @@ end
 --> Instance
 do
 	Types.Instance = {
-		Read = function(Variable: string, Block: Block)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?)
 			--Block:Line("RecieveInstanceCursor += 1")
 			Block:Line(`{Block:Declare(Variable)} = RecieveInstances[RecieveInstanceCursor]`)
 		end,
@@ -531,7 +541,7 @@ do
 
 	Primitives.Instance = {
 		Type = function(Declaration)
-			return Declaration.Value.Class
+			return Declaration.Value.Class or "Instance"
 		end,
 		Generate = GeneratePrimitivePrefab("any", Types.Instance, Asserts.Instance),
 	}
@@ -540,7 +550,7 @@ end
 --> unknown
 do
 	Types.unknown = {
-		Read = function(Variable: string, Block: Block)
+		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?)
 			Block:Line("RecieveInstanceCursor += 1")
 			Block:Line(`{Block:Declare(Variable)} = RecieveInstances[RecieveInstanceCursor]`)
 		end,
