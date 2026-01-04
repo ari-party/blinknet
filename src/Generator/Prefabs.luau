@@ -174,7 +174,7 @@ local function GeneratePrimitivePrefab(Type: string, Prefab: TypePrefab, AssertG
 				local Assert = AssertGenerator(VariableName, Class)
 				if Block == Write then
 					Block:Compare(VariableName, "nil", "Not"):Multiline(Assert.Exact :: string, Block.Indent + 1):End()
-				else
+				elseif Class ~= "Instance" then
 					Block:Multiline(Assert.Exact :: string, Block.Indent)
 				end
 			end
