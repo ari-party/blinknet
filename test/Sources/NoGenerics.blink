@@ -409,6 +409,22 @@ event InstanceOptional {
     Data: Instance?
 }
 
+event InstanceAllowNil {
+    From: Server,
+    Type: Reliable,
+    Call: SingleSync,
+    Data: Instance,
+    AllowNilInstances: true
+}
+
+event InstanceOptionalAllowNil {
+    From: Server,
+    Type: Reliable,
+    Call: SingleSync,
+    Data: Instance?,
+    AllowNilInstances: true
+}
+
 event Reference {
     From: Server,
     Type: Reliable,

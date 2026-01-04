@@ -11,7 +11,7 @@ local Settings = require("./Settings")
 
 ---- Globals ----
 
-type NumberRange = { Min: number, Max: number }
+export type NumberRange = { Min: number, Max: number }
 local NumberRange = {
 	new = function(Min: number, Max: number?): NumberRange
 		return {
@@ -166,12 +166,14 @@ export type Event = Node<"Event", {
 	Type: "Reliable" | "Unreliable",
 	Call: "SingleSync" | "SingleAsync" | "ManySync" | "ManyAsync" | "Polling",
 	Data: (TypeNode | Tuple)?,
+	AllowNilInstances: boolean?,
 }, {}>
 
 export type Function = Node<"Function", {
 	Yield: "Future" | "Promise" | "Coroutine",
 	Data: (TypeNode | Tuple)?,
 	Return: (TypeNode | Tuple)?,
+	AllowNilInstances: boolean?,
 }, {}>
 
 export type ScopeNode = Node<"Scope", {
@@ -203,12 +205,14 @@ local EVENT: { EventOption } = {
 	{ Key = "Call", Type = "Identifier", Values = { "SingleSync", "SingleAsync", "ManySync", "ManyAsync", "Polling" } },
 	{ Key = "Poll", Type = "Boolean", Values = { true, false }, Optional = true },
 	{ Key = "Data", Type = "Identifier", Values = {}, Optional = true },
+	{ Key = "AllowNilInstances", Type = "Boolean", Values = { true, false }, Optional = true },
 }
 
 local FUNCTION: { EventOption } = {
 	{ Key = "Yield", Type = "Identifier", Values = { "Future", "Promise", "Coroutine" } },
 	{ Key = "Data", Type = "Identifier", Values = {}, Optional = true },
 	{ Key = "Return", Type = "Identifier", Values = {}, Optional = true },
+	{ Key = "AllowNilInstances", Type = "Boolean", Values = { true, false }, Optional = true },
 }
 
 type Bucket = "Types" | "Scopes"
@@ -1163,6 +1167,17 @@ function Parser.Event(self: Parser, Name: Token): Event
 		Call = "Polling"
 	end
 
+	if Structure.AllowNilInstances and Structure.From ~= "Server" then
+		Error.new(
+			Error.ParserUnknownOption,
+			self.Source,
+			`Option "AllowNilInstances" can only be used on events that are sent from the server`,
+			self.File
+		)
+			:Primary(Name, `Option "AllowNilInstances" is invalid for events sent from the client`)
+			:Emit()
+	end
+
 	return {
 		Type = "Event",
 		Name = Name.Value,
@@ -1171,6 +1186,7 @@ function Parser.Event(self: Parser, Name: Token): Event
 			Type = Structure.Type,
 			Call = Call,
 			Data = Structure.Data,
+			AllowNilInstances = Structure.AllowNilInstances,
 		},
 		Tokens = {},
 	}
@@ -1186,6 +1202,7 @@ function Parser.Function(self: Parser, Name: Token): Function
 			Yield = Structure.Yield,
 			Data = Structure.Data,
 			Return = Structure.Return,
+			AllowNilInstances = Structure.AllowNilInstances,
 		},
 		Tokens = {},
 	}
