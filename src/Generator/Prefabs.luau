@@ -535,7 +535,6 @@ end
 do
 	Types.Instance = {
 		Read = function(Variable: string, Block: Block, AllowNilInstances: boolean?)
-			--Block:Line("RecieveInstanceCursor += 1")
 			Block:Line(`{Block:Declare(Variable)} = RecieveInstances[RecieveInstanceCursor]`)
 		end,
 		Write = function(Value: string, Block: Block)
