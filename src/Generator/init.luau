@@ -139,7 +139,7 @@ function Declarations.Primitive(
 	local Tokens = Declaration.Tokens
 	local Primitive = Tokens.Primitive.Value
 	local Generator = Primitives[Primitive]
-	Generator.Generate(Declaration, Variable, Read, Write, Options.WriteValidations)
+	Generator.Generate(Declaration, Variable, Read, Write, Options.WriteValidations, AllowNilInstances)
 end
 
 function Declarations.Set(
@@ -910,7 +910,7 @@ function Declarations.Optional(
 		Read = Read:Compare(`buffer.readu8(RecieveBuffer, {Read:Read(1)})`, "1", "Equals")
 		Write = Write:Compare(Variable, "nil", "Not")
 
-		Generators.UserType(Declaration.Value.Of, Read, Write, Variable, nil)
+		Generators.UserType(Declaration.Value.Of, Read, Write, Variable, AllowNilInstances)
 		Read:End()
 		Write:End()
 	end
@@ -964,7 +964,7 @@ function Generators.UserType(
 	elseif Declaration.Type == "Array" then
 		Declarations.Array(Declaration, Read, Write, Variable, AllowNilInstances)
 	elseif Declaration.Type == "Optional" then
-		Declarations.Optional(Declaration, Read, Write, Variable, nil)
+		Declarations.Optional(Declaration, Read, Write, Variable, AllowNilInstances)
 	end
 end
 
